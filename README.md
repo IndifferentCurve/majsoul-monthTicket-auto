@@ -14,6 +14,8 @@ console.log(`UID: ${GameMgr.Inst.yostar_uid}\nTOKEN: ${GameMgr.Inst.yostar_acces
 
 Use Yostar session credentials instead. The script now supports `YOSTAR_UID`, `YOSTAR_TOKEN`, and `YOSTAR_DEVICE_ID`.
 
+Important: do not use `UID2` as `YOSTAR_UID`. The current Yostar WebGL SDK stores the game login pair as `Data.UserInfo.ID` and `Data.UserInfo.Token`. `UID2` may appear in nearby network responses, but it is not the value sent to Mahjong Soul's `oauth2Auth` request.
+
 ## Required secrets
 
 Go to your fork on GitHub, then open `Settings > Secrets and variables > Actions > New repository secret`.
@@ -54,11 +56,34 @@ The easiest manual path is:
 2. Open DevTools with `F12`.
 3. Open the `Network` tab.
 4. Filter requests by `yostarplat.com`.
-5. Look for `/user/login` or `/user/quick-login`.
+5. Log in again if needed, then look for `/user/login` or `/user/quick-login`.
 6. In the request headers, copy the `DeviceID` from the JSON inside the `Authorization` header.
 7. In the response body, copy `Data.UserInfo.ID` and `Data.UserInfo.Token`.
+8. Do not copy `Data.UserInfo.UID2` into `YOSTAR_UID`; it is a different identifier.
 
 Keep these values private. Anyone with these secrets may be able to create a game session for your account.
+
+### One-time email-code login
+
+The repository also supports a one-time Yostar email-code flow for local troubleshooting:
+
+```text
+MS_SERVER=jp
+MS_AUTH_MODE=yostar_auth
+EMAIL=<Yostar email address>
+YOSTAR_AUTH_TOKEN=<6-digit email verification code>
+YOSTAR_DEVICE_ID=<a stable UUID for this automation device>
+```
+
+This follows the current SDK sequence:
+
+```text
+/yostar/get-auth -> /user/login -> Mahjong Soul oauth2Auth
+```
+
+The old shortcut of sending `EMAIL` and the 6-digit code directly to `/user/login` no longer matches the WebGL SDK and can produce tokens that pass Yostar `quick-login` but fail Mahjong Soul `oauth2Auth`.
+
+For scheduled GitHub Actions, prefer `MS_AUTH_MODE=yostar_session` with `YOSTAR_UID`, `YOSTAR_TOKEN`, and `YOSTAR_DEVICE_ID`. Email verification codes expire and are not suitable for daily scheduled runs.
 
 ## GitHub Actions setup
 
@@ -74,7 +99,9 @@ The default scheduled run is `21:05 UTC`, which is `06:05 JST/KST`.
 
 ## Troubleshooting
 
-If the workflow fails with `oauth2Auth failed` and `error.code=151`, check both the Yostar OAuth type and the client version. The current web client builds `client_version_string` as `web-` plus `version.json.version` with the trailing `.w` removed, while `client_version.resource` keeps the full `version.json.version`. The Yostar SDK v4 OAuth types are JP `21`, EN `22`, and KR `23`. A JP account using EN type `22` can fail with the same `151` error.
+If the workflow fails with `oauth2Auth failed` and `error.code=151`, check the Yostar credential pair first. `YOSTAR_UID` must be `Data.UserInfo.ID`, `YOSTAR_TOKEN` must be `Data.UserInfo.Token`, and both must come from the current Yostar SDK login flow. A token produced by an old direct `/user/login` request, or a `UID2` copied from `/user/detail`, can pass Yostar platform `quick-login` but still fail Mahjong Soul `oauth2Auth`.
+
+After the credential pair is confirmed, check the OAuth type and client version. The current web client builds `client_version_string` as `web-` plus `version.json.version` with the trailing `.w` removed, while `client_version.resource` keeps the full `version.json.version`. The Yostar SDK v4 OAuth types are JP `21`, EN `22`, and KR `23`. A JP account using EN type `22` can fail with the same `151` error.
 
 If the workflow fails with a Yostar platform error, refresh your Yostar session credentials and update:
 

@@ -323,13 +323,24 @@ async function getYostarSessionToken(server, { uid, token, deviceId }) {
 }
 
 async function getYostarLoginToken(server, { email, token, deviceId }) {
+  const authData = await yostarPlatformPost(
+    server,
+    '/yostar/get-auth',
+    {
+      Account: email,
+      Code: token
+    },
+    { deviceId }
+  );
+
   const data = await yostarPlatformPost(
     server,
     '/user/login',
     {
       Type: 'yostar',
-      OpenID: email,
-      Token: token,
+      OpenID: must(authData?.UID, `Yostar auth response missing UID: ${JSON.stringify(authData)}`),
+      Token: must(authData?.Token, `Yostar auth response missing Token: ${JSON.stringify(authData)}`),
+      UserName: authData?.Account,
       Secret: '',
       CheckAccountPlus: 0
     },
