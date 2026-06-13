@@ -40,7 +40,7 @@ const SERVER_CONFIGS = {
     tag: 'jp',
     loginMode: 'oauth_code',
     oauthType: 21,
-    yostarOauthType: 22,
+    yostarOauthType: 21,
     yostar: {
       sdkBase: 'https://jp-sdk-api.yostarplat.com',
       region: 'JP',
@@ -74,7 +74,7 @@ const SERVER_CONFIGS = {
     tag: 'kr',
     loginMode: 'oauth_code',
     oauthType: 23,
-    yostarOauthType: 22,
+    yostarOauthType: 23,
     yostar: {
       sdkBase: 'https://jp-sdk-api.yostarplat.com',
       region: 'KR',
@@ -238,12 +238,12 @@ function buildClientVersionStrings(versionInfo, resourceVersion) {
   const forceResourceVersion = normalizeResourceVersion(forceVersion);
 
   return uniqueStrings([
-    version && `${CLIENT_VERSION_PREFIX}-${version}`,
     resourceVersion && `${CLIENT_VERSION_PREFIX}-${resourceVersion}`,
+    version && `${CLIENT_VERSION_PREFIX}-${version}`,
     forceVersion && `${CLIENT_VERSION_PREFIX}-${forceVersion}`,
     forceResourceVersion && `${CLIENT_VERSION_PREFIX}-${forceResourceVersion}`,
-    version,
     resourceVersion,
+    version,
     forceVersion,
     forceResourceVersion
   ]);
@@ -425,7 +425,7 @@ async function loadServerContext(server) {
   const productVersion = parseProductVersion(pageHtml) || process.env.MS_PRODUCT_VERSION;
   const clientVersionStrings = buildClientVersionStrings(versionInfo, resourceVersion);
   const clientVersionString = must(clientVersionStrings[0], `Unable to build client version from ${JSON.stringify(versionInfo)}`);
-  const clientVersionInfo = buildClientVersionInfo(productVersion, resourceVersion);
+  const clientVersionInfo = buildClientVersionInfo(undefined, version);
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
 
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);

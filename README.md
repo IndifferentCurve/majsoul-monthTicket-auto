@@ -74,7 +74,7 @@ The default scheduled run is `21:05 UTC`, which is `06:05 JST/KST`.
 
 ## Troubleshooting
 
-If the workflow fails with `oauth2Auth failed` and `error.code=151`, the client version sent to Mahjong Soul is out of date or in the wrong format. Check `version.json` from the target server and keep the exact web version string, including the trailing `.w` when present. Do not guess a `WebGL_2022-*` prefix; the current web client still exposes `client_version_string` values in the `web-*` family. This fork now tries the exact `version`, normalized version, and `force_version` variants automatically.
+If the workflow fails with `oauth2Auth failed` and `error.code=151`, check both the Yostar OAuth type and the client version. The current web client builds `client_version_string` as `web-` plus `version.json.version` with the trailing `.w` removed, while `client_version.resource` keeps the full `version.json.version`. The Yostar SDK v4 OAuth types are JP `21`, EN `22`, and KR `23`. A JP account using EN type `22` can fail with the same `151` error.
 
 If the workflow fails with a Yostar platform error, refresh your Yostar session credentials and update:
 
