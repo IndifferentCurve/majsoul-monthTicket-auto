@@ -43,7 +43,7 @@ const SERVER_CONFIGS = {
     yostar: {
       sdkBase: 'https://jp-sdk-api.yostarplat.com',
       region: 'JP',
-      pid: 'JP-MAJONGSOUL',
+      pid: 'JP-MJ',
       lang: 'jp'
     },
     currencyPlatforms: [1, 3, 5, 9, 12]
