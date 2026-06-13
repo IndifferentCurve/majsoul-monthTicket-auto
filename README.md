@@ -2,44 +2,101 @@
 
 > Warning: Any disadvantages, account sanctions, or other consequences resulting from use of this project are solely the user's responsibility.
 
-![image](https://github.com/4n3u/majsoul-monthTicket-auto/assets/167657823/89844790-9a47-40b7-8e65-ed07430f3917)
-![image](https://github.com/4n3u/majsoul-monthTicket-auto/assets/167657823/720689fa-7237-4d85-8979-c3e768c7f1d9)
+This project uses GitHub Actions to log in to Mahjong Soul once per day, collect the monthly ticket reward, and help complete attendance achievements.
 
-[日本語](README-ja.md) [한국어](README-ko.md) [中文](README-zh.md)
+## What changed in 2026
 
-This project automates daily logins to Majsoul to achieve the attendance achievement (8bit Riichi BGM) and collect the daily Fortune Charm using GitHub Actions.  
+Mahjong Soul's JP/EN/KR web client moved to the newer Yostar Account + Unity WebGL flow. The old browser console command below no longer works on the current web client:
 
-## Prerequisites
-1. Open Majsoul in your browser.
-2. Press `F12` and switch to the `Console` tab.
-3. Run the following code:
-   ```js
-   console.log(`UID: ${GameMgr.Inst.yostar_uid}\nTOKEN: ${GameMgr.Inst.yostar_accessToken}`);
-   ```
-4. Save the printed `UID` and `TOKEN` values for JP/EN/KR server setup.
-5. For CN, use your account email and password instead. The script calculates the required password hash internally.
+```js
+console.log(`UID: ${GameMgr.Inst.yostar_uid}\nTOKEN: ${GameMgr.Inst.yostar_accessToken}`);
+```
 
-## Setup Instructions
-1. Fork this repository on GitHub.
-2. In your fork, go to `Settings > Secrets and variables > Actions`.
-3. Click `New repository secret` and add `MS_SERVER`.
-4. Set `MS_SERVER` to one of `jp`, `en`, `kr`, or `cn`. If you do not set it, the default is `jp`.
-5. If you use the `jp`, `en`, or `kr` server, click `New repository secret` again and add `UID` and `TOKEN` with the values you saved earlier.
-6. If you use the `cn` server, click `New repository secret` again and add `EMAIL` and `PASSWORD` with your account email and plaintext password.
-7. Go to `Settings > Actions > General` and change `Workflow permissions` to `Read and write permissions`.
-8. The default run time is 6:05 AM JST every day. To change it, edit the `cron` value in `.github/workflows/main.yml`.
-9. Open the `Actions` tab and click `I understand my workflows, go ahead and enable them` to enable workflows.
-10. Select `Login to Majsoul` from the left-side `Workflows` list and click `Enable workflow`.
+Use Yostar session credentials instead. The script now supports `YOSTAR_UID`, `YOSTAR_TOKEN`, and `YOSTAR_DEVICE_ID`.
 
-## Testing Instructions
-1. Stay logged in to Majsoul in your browser.
-2. In GitHub, go to `Actions > Workflows` and click `Run workflow`.
-3. If it works correctly, your browser session may be disconnected because of a duplicate login.
+## Required secrets
 
-## Caution
-- GitHub Actions may be delayed by up to 30 minutes depending on GitHub server load.
-- Be careful not to expose your `token` and `uid` to others.
+Go to your fork on GitHub, then open `Settings > Secrets and variables > Actions > New repository secret`.
+
+For JP, EN, or KR servers, add:
+
+```text
+MS_SERVER=jp
+MS_AUTH_MODE=yostar_session
+YOSTAR_UID=<Yostar UserInfo.ID>
+YOSTAR_TOKEN=<Yostar UserInfo.Token>
+YOSTAR_DEVICE_ID=<the same DeviceID used when the token was issued>
+```
+
+Set `MS_SERVER` to `jp`, `en`, or `kr`. If omitted, the script defaults to `jp`.
+
+For CN server, add:
+
+```text
+MS_SERVER=cn
+EMAIL=<account email>
+PASSWORD=<account password>
+```
+
+## Getting Yostar session credentials
+
+You need the values returned by the Yostar platform API after logging in:
+
+```text
+UserInfo.ID      -> YOSTAR_UID
+UserInfo.Token   -> YOSTAR_TOKEN
+DeviceID         -> YOSTAR_DEVICE_ID
+```
+
+The easiest manual path is:
+
+1. Open Mahjong Soul in Chrome and log in with the Yostar account that owns your Mahjong Soul account.
+2. Open DevTools with `F12`.
+3. Open the `Network` tab.
+4. Filter requests by `yostarplat.com`.
+5. Look for `/user/login` or `/user/quick-login`.
+6. In the request headers, copy the `DeviceID` from the JSON inside the `Authorization` header.
+7. In the response body, copy `Data.UserInfo.ID` and `Data.UserInfo.Token`.
+
+Keep these values private. Anyone with these secrets may be able to create a game session for your account.
+
+## GitHub Actions setup
+
+1. Fork this repository.
+2. Add the required repository secrets listed above.
+3. Go to `Settings > Actions > General`.
+4. Set `Workflow permissions` to `Read and write permissions`.
+5. Open the `Actions` tab and enable workflows if GitHub asks.
+6. Select `Login to Majsoul`.
+7. Click `Run workflow` to test manually.
+
+The default scheduled run is `21:05 UTC`, which is `06:05 JST/KST`.
+
+## Troubleshooting
+
+If the workflow fails with `oauth2Auth failed` and `error.code=151`, the client version sent to Mahjong Soul is out of date. Update this repository so the script sends the current WebGL client version.
+
+If the workflow fails with a Yostar platform error, refresh your Yostar session credentials and update:
+
+```text
+YOSTAR_UID
+YOSTAR_TOKEN
+YOSTAR_DEVICE_ID
+```
+
+If the workflow hangs, make sure the version with WebSocket/RPC timeouts is in your fork. The `Execute month ticket automation` step should fail quickly instead of waiting indefinitely.
+
+If duplicate login disconnects your browser session after a successful test, that is expected. The Action logged in as the same account.
+
+## Optional behavior
+
+The script only collects monthly ticket rewards by default. Green gift buying is disabled in `src/index.js`:
+
+```js
+const BUY_GREEN_GIFT = false;
+```
 
 ## Contact
+
 - [Discord](https://discord.com/users/245702966085025802)
 - [X](https://x.com/xflVsSnvB6cx8ZM)

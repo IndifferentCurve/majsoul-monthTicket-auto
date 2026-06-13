@@ -9,6 +9,7 @@ const DEFAULT_HTTP_TIMEOUT_MS = 15000;
 const WS_OPEN_TIMEOUT_MS = 15000;
 const WS_CLOSE_TIMEOUT_MS = 5000;
 const RPC_TIMEOUT_MS = 15000;
+const CLIENT_VERSION_PREFIX = 'WebGL_2022';
 const YOSTAR_SDK_VERSION = '4.16.2';
 const YOSTAR_SIGNING_SALT = '347467131a466f6865d7f2662e38841fbe2adb23';
 const BUY_GREEN_GIFT = false;
@@ -198,6 +199,41 @@ async function requestJson(url, { body, headers, timeoutMs = DEFAULT_HTTP_TIMEOU
   }
 }
 
+async function requestText(url, { headers, timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, ...options } = {}) {
+  const timeout = withTimeoutSignal(timeoutMs, `Request timeout for ${url}`);
+  const init = { ...options, headers, signal: options.signal || timeout.signal };
+
+  try {
+    const response = await fetch(url, init);
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      fail(`Request failed ${response.status} ${response.statusText} for ${url}${text ? `: ${text}` : ''}`);
+    }
+    return response.text();
+  } finally {
+    if (!options.signal) {
+      timeout.clear();
+    }
+  }
+}
+
+function normalizeResourceVersion(version) {
+  return String(version || '').replace(/\.w$/, '');
+}
+
+function parseProductVersion(pageHtml) {
+  return pageHtml.match(/productVersion:\s*["']([^"']+)["']/)?.[1];
+}
+
+function buildClientVersionInfo(productVersion, resourceVersion) {
+  return Object.fromEntries(
+    Object.entries({
+      package: productVersion,
+      resource: resourceVersion
+    }).filter(([, value]) => value !== undefined && value !== null && value !== '')
+  );
+}
+
 function signYostarPayload(head, body) {
   return createHash('md5')
     .update(`${JSON.stringify(head)}${JSON.stringify(body)}${YOSTAR_SIGNING_SALT}`)
@@ -350,14 +386,21 @@ async function loadServerContext(server) {
   const versionUrl = new URL(buildUrl(base, 'version.json'));
   versionUrl.searchParams.set('randv', buildRandv());
 
-  const versionInfo = await requestJson(versionUrl);
+  const [versionInfo, pageHtml] = await Promise.all([
+    requestJson(versionUrl),
+    requestText(buildUrl(base, 'index.html')).catch(() => '')
+  ]);
   must(versionInfo?.version, `Unexpected version payload: ${JSON.stringify(versionInfo)}`);
 
   const version = versionInfo.version;
-  const versionToForce = version.replace('.w', '');
+  const resourceVersion = normalizeResourceVersion(version);
+  const productVersion = parseProductVersion(pageHtml) || process.env.MS_PRODUCT_VERSION;
+  const clientVersionString = `${CLIENT_VERSION_PREFIX}-${resourceVersion}`;
+  const clientVersionInfo = buildClientVersionInfo(productVersion, resourceVersion);
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
 
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);
+  console.log(`client version -> product=${productVersion || 'unknown'} resource=${resourceVersion} string=${clientVersionString}`);
 
   const [config, resManifest] = await Promise.all([
     requestJson(buildUrl(base, `${codeDir}/config.json`)),
@@ -393,7 +436,10 @@ async function loadServerContext(server) {
     base,
     routes: routesToTry,
     version,
-    versionToForce,
+    productVersion,
+    resourceVersion,
+    clientVersionString,
+    clientVersionInfo,
     proto: loadProtoTypes(liqiJson)
   };
 }
@@ -518,7 +564,7 @@ async function openChannel(endpoint, origin, Wrapper) {
 }
 
 async function createSessionForRoute(context, route, credentials) {
-  const { server, proto, version, versionToForce } = context;
+  const { server, proto, clientVersionInfo, clientVersionString } = context;
   const { uid, token, email, password, oauthType } = credentials;
   const device = buildDevice(server);
   console.log(`trying gateway route ${route.id}: ${route.endpoint}`);
@@ -563,11 +609,11 @@ async function createSessionForRoute(context, route, credentials) {
           reconnect: false,
           device,
           random_key: randomUUID(),
-          client_version: { resource: version },
+          client_version: clientVersionInfo,
           gen_access_token: true,
           currency_platforms: server.currencyPlatforms,
           type: server.loginType,
-          client_version_string: `web-${versionToForce}`,
+          client_version_string: clientVersionString,
           tag: server.tag
         },
         proto.ResOauth2Login
@@ -595,7 +641,7 @@ async function createSessionForRoute(context, route, credentials) {
           type: oauthType,
           code: token,
           uid,
-          client_version_string: `web-${versionToForce}`
+          client_version_string: clientVersionString
         },
         proto.ResOauth2Auth
       );
@@ -624,8 +670,8 @@ async function createSessionForRoute(context, route, credentials) {
         reconnect: false,
         device,
         random_key: randomUUID(),
-        client_version: { resource: version },
-        client_version_string: `web-${versionToForce}`,
+        client_version: clientVersionInfo,
+        client_version_string: clientVersionString,
         currency_platforms: server.currencyPlatforms,
         tag: server.tag
       },
