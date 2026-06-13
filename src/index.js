@@ -232,16 +232,20 @@ function uniqueStrings(values) {
   });
 }
 
-function buildClientVersionStrings(versionInfo, resourceVersion) {
+function buildClientVersionStrings(versionInfo, resourceVersion, productVersion) {
   const version = String(versionInfo?.version || '').trim();
   const forceVersion = String(versionInfo?.force_version || '').trim();
   const forceResourceVersion = normalizeResourceVersion(forceVersion);
+  const product = String(productVersion || '').trim();
 
   return uniqueStrings([
+    product && `${CLIENT_VERSION_PREFIX}-${product}`,
     resourceVersion && `${CLIENT_VERSION_PREFIX}-${resourceVersion}`,
     version && `${CLIENT_VERSION_PREFIX}-${version}`,
     forceVersion && `${CLIENT_VERSION_PREFIX}-${forceVersion}`,
     forceResourceVersion && `${CLIENT_VERSION_PREFIX}-${forceResourceVersion}`,
+    resourceVersion && `WebGL-${resourceVersion}`,
+    product,
     resourceVersion,
     version,
     forceVersion,
@@ -434,7 +438,7 @@ async function loadServerContext(server) {
   const version = versionInfo.version;
   const resourceVersion = normalizeResourceVersion(version);
   const productVersion = parseProductVersion(pageHtml) || process.env.MS_PRODUCT_VERSION;
-  const clientVersionStrings = buildClientVersionStrings(versionInfo, resourceVersion);
+  const clientVersionStrings = buildClientVersionStrings(versionInfo, resourceVersion, productVersion);
   const clientVersionString = must(clientVersionStrings[0], `Unable to build client version from ${JSON.stringify(versionInfo)}`);
   const clientVersionInfo = buildClientVersionInfo(undefined, version);
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');

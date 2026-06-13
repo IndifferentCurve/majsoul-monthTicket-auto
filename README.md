@@ -101,7 +101,7 @@ The default scheduled run is `21:05 UTC`, which is `06:05 JST/KST`.
 
 If the workflow fails with `oauth2Auth failed` and `error.code=151`, check the Yostar credential pair first. `YOSTAR_UID` must be `Data.UserInfo.ID`, `YOSTAR_TOKEN` must be `Data.UserInfo.Token`, and both must come from the current Yostar SDK login flow. A token produced by an old direct `/user/login` request, or a `UID2` copied from `/user/detail`, can pass Yostar platform `quick-login` but still fail Mahjong Soul `oauth2Auth`.
 
-After the credential pair is confirmed, check the OAuth type and client version. The current web client builds `client_version_string` as `web-` plus `version.json.version` with the trailing `.w` removed, while `client_version.resource` keeps the full `version.json.version`. The Yostar SDK v4 OAuth types are JP `21`, EN `22`, and KR `23`. A JP account using EN type `22` can fail with the same `151` error.
+After the credential pair is confirmed, check the OAuth type and client version. As of June 2026, the JP server accepts the product version from `index.html` as `web-<productVersion>` for `client_version_string` (for example, `web-4.0.9`) even though `version.json.version` may look like `0.11.252.w`. The script reads both values and tries the product-version form first, with resource-version fallbacks. The Yostar SDK v4 OAuth types are JP `21`, EN `22`, and KR `23`. A JP account using EN type `22` can fail with the same `151` error.
 
 If the workflow fails with a Yostar platform error, refresh your Yostar session credentials and update:
 
