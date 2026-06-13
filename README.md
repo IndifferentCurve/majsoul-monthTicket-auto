@@ -74,7 +74,7 @@ The default scheduled run is `21:05 UTC`, which is `06:05 JST/KST`.
 
 ## Troubleshooting
 
-If the workflow fails with `oauth2Auth failed` and `error.code=151`, the client version sent to Mahjong Soul is out of date. Update this repository so the script sends the current WebGL client version.
+If the workflow fails with `oauth2Auth failed` and `error.code=151`, the client version sent to Mahjong Soul is out of date or in the wrong format. Check `version.json` from the target server and keep the exact web version string, including the trailing `.w` when present. Do not guess a `WebGL_2022-*` prefix; the current web client still exposes `client_version_string` values in the `web-*` family. This fork now tries the exact `version`, normalized version, and `force_version` variants automatically.
 
 If the workflow fails with a Yostar platform error, refresh your Yostar session credentials and update:
 

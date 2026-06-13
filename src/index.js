@@ -9,7 +9,7 @@ const DEFAULT_HTTP_TIMEOUT_MS = 15000;
 const WS_OPEN_TIMEOUT_MS = 15000;
 const WS_CLOSE_TIMEOUT_MS = 5000;
 const RPC_TIMEOUT_MS = 15000;
-const CLIENT_VERSION_PREFIX = 'WebGL_2022';
+const CLIENT_VERSION_PREFIX = 'web';
 const YOSTAR_SDK_VERSION = '4.16.2';
 const YOSTAR_SIGNING_SALT = '347467131a466f6865d7f2662e38841fbe2adb23';
 const BUY_GREEN_GIFT = false;
@@ -221,6 +221,34 @@ function normalizeResourceVersion(version) {
   return String(version || '').replace(/\.w$/, '');
 }
 
+function uniqueStrings(values) {
+  const seen = new Set();
+  return values.filter(value => {
+    if (!value || seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+    return true;
+  });
+}
+
+function buildClientVersionStrings(versionInfo, resourceVersion) {
+  const version = String(versionInfo?.version || '').trim();
+  const forceVersion = String(versionInfo?.force_version || '').trim();
+  const forceResourceVersion = normalizeResourceVersion(forceVersion);
+
+  return uniqueStrings([
+    version && `${CLIENT_VERSION_PREFIX}-${version}`,
+    resourceVersion && `${CLIENT_VERSION_PREFIX}-${resourceVersion}`,
+    forceVersion && `${CLIENT_VERSION_PREFIX}-${forceVersion}`,
+    forceResourceVersion && `${CLIENT_VERSION_PREFIX}-${forceResourceVersion}`,
+    version,
+    resourceVersion,
+    forceVersion,
+    forceResourceVersion
+  ]);
+}
+
 function parseProductVersion(pageHtml) {
   return pageHtml.match(/productVersion:\s*["']([^"']+)["']/)?.[1];
 }
@@ -395,12 +423,14 @@ async function loadServerContext(server) {
   const version = versionInfo.version;
   const resourceVersion = normalizeResourceVersion(version);
   const productVersion = parseProductVersion(pageHtml) || process.env.MS_PRODUCT_VERSION;
-  const clientVersionString = `${CLIENT_VERSION_PREFIX}-${resourceVersion}`;
+  const clientVersionStrings = buildClientVersionStrings(versionInfo, resourceVersion);
+  const clientVersionString = must(clientVersionStrings[0], `Unable to build client version from ${JSON.stringify(versionInfo)}`);
   const clientVersionInfo = buildClientVersionInfo(productVersion, resourceVersion);
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
 
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);
   console.log(`client version -> product=${productVersion || 'unknown'} resource=${resourceVersion} string=${clientVersionString}`);
+  console.log(`client version candidates: ${clientVersionStrings.join(', ')}`);
 
   const [config, resManifest] = await Promise.all([
     requestJson(buildUrl(base, `${codeDir}/config.json`)),
@@ -439,6 +469,7 @@ async function loadServerContext(server) {
     productVersion,
     resourceVersion,
     clientVersionString,
+    clientVersionStrings,
     clientVersionInfo,
     proto: loadProtoTypes(liqiJson)
   };
@@ -706,11 +737,13 @@ async function createSession(context, credentials) {
       : credentials;
 
   for (const route of context.routes) {
-    try {
-      return await createSessionForRoute(context, route, preparedCredentials);
-    } catch (error) {
-      errors.push({ route: route.id, message: error?.message || String(error) });
-      console.warn(`gateway route ${route.id} failed: ${error?.message || error}`);
+    for (const clientVersionString of context.clientVersionStrings || [context.clientVersionString]) {
+      try {
+        return await createSessionForRoute({ ...context, clientVersionString }, route, preparedCredentials);
+      } catch (error) {
+        errors.push({ route: route.id, clientVersionString, message: error?.message || String(error) });
+        console.warn(`gateway route ${route.id} failed with ${clientVersionString}: ${error?.message || error}`);
+      }
     }
   }
 
