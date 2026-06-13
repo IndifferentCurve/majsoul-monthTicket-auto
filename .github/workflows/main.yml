@@ -21,10 +21,16 @@ jobs:
       run: npm ci
 
     - name: Execute month ticket automation
+      timeout-minutes: 5
       run: npm start
       env:
         UID: ${{ secrets.UID }}
         TOKEN: ${{ secrets.TOKEN }}
+        YOSTAR_UID: ${{ secrets.YOSTAR_UID }}
+        YOSTAR_TOKEN: ${{ secrets.YOSTAR_TOKEN }}
+        YOSTAR_AUTH_TOKEN: ${{ secrets.YOSTAR_AUTH_TOKEN }}
+        YOSTAR_DEVICE_ID: ${{ secrets.YOSTAR_DEVICE_ID }}
+        MS_AUTH_MODE: ${{ secrets.MS_AUTH_MODE }}
         EMAIL: ${{ secrets.EMAIL }}
         PASSWORD: ${{ secrets.PASSWORD }}
         MS_SERVER: ${{ secrets.MS_SERVER }}

@@ -1,10 +1,16 @@
 require('dotenv').config();
 
-const { createHmac, randomUUID } = require('node:crypto');
+const { createHash, createHmac, randomUUID } = require('node:crypto');
 const protobuf = require('protobufjs/light');
 const WebSocket = require('ws');
 
 const DEFAULT_SERVER = 'jp';
+const DEFAULT_HTTP_TIMEOUT_MS = 15000;
+const WS_OPEN_TIMEOUT_MS = 15000;
+const WS_CLOSE_TIMEOUT_MS = 5000;
+const RPC_TIMEOUT_MS = 15000;
+const YOSTAR_SDK_VERSION = '4.16.2';
+const YOSTAR_SIGNING_SALT = '347467131a466f6865d7f2662e38841fbe2adb23';
 const BUY_GREEN_GIFT = false;
 const GREEN_GIFT_PRICE_GOLD = 15000;
 const GREEN_GIFT_MAX_COUNT_PER_GOODS = 4;
@@ -33,6 +39,13 @@ const SERVER_CONFIGS = {
     tag: 'jp',
     loginMode: 'oauth_code',
     oauthType: 21,
+    yostarOauthType: 22,
+    yostar: {
+      sdkBase: 'https://jp-sdk-api.yostarplat.com',
+      region: 'JP',
+      pid: 'JP-MAJONGSOUL',
+      lang: 'jp'
+    },
     currencyPlatforms: [1, 3, 5, 9, 12]
   },
   en: {
@@ -43,6 +56,13 @@ const SERVER_CONFIGS = {
     tag: 'en',
     loginMode: 'oauth_code',
     oauthType: 22,
+    yostarOauthType: 22,
+    yostar: {
+      sdkBase: 'https://en-sdk-api.yostarplat.com',
+      region: 'US',
+      pid: 'US-MAJONGSOUL',
+      lang: 'en'
+    },
     currencyPlatforms: [1, 4, 5, 9, 12]
   },
   kr: {
@@ -53,6 +73,13 @@ const SERVER_CONFIGS = {
     tag: 'kr',
     loginMode: 'oauth_code',
     oauthType: 23,
+    yostarOauthType: 22,
+    yostar: {
+      sdkBase: 'https://jp-sdk-api.yostarplat.com',
+      region: 'KR',
+      pid: 'KR-MAJONGSOUL',
+      lang: 'kr'
+    },
     currencyPlatforms: [1, 4, 5, 9],
     device: {
       sale_platform: 'kr_web'
@@ -97,6 +124,14 @@ const fail = message => {
 };
 
 const must = (value, message) => value || fail(message);
+const withTimeoutSignal = (timeoutMs, message) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error(message)), timeoutMs);
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timeout)
+  };
+};
 const normalizeBase = raw => {
   const base = must((raw || '').trim(), 'Server base URL must not be empty');
   if (!/^https?:\/\//i.test(base)) {
@@ -135,8 +170,9 @@ function getServerConfig(serverKey) {
   };
 }
 
-async function requestJson(url, { body, headers, ...options } = {}) {
-  const init = { ...options, headers };
+async function requestJson(url, { body, headers, timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, ...options } = {}) {
+  const timeout = withTimeoutSignal(timeoutMs, `Request timeout for ${url}`);
+  const init = { ...options, headers, signal: options.signal || timeout.signal };
   if (body !== undefined) {
     init.body = typeof body === 'string' ? body : JSON.stringify(body);
     if (typeof body !== 'string') {
@@ -148,11 +184,130 @@ async function requestJson(url, { body, headers, ...options } = {}) {
     }
   }
 
-  const response = await fetch(url, init);
-  if (!response.ok) {
-    fail(`Request failed ${response.status} ${response.statusText} for ${url}`);
+  try {
+    const response = await fetch(url, init);
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      fail(`Request failed ${response.status} ${response.statusText} for ${url}${text ? `: ${text}` : ''}`);
+    }
+    return response.json();
+  } finally {
+    if (!options.signal) {
+      timeout.clear();
+    }
   }
-  return response.json();
+}
+
+function signYostarPayload(head, body) {
+  return createHash('md5')
+    .update(`${JSON.stringify(head)}${JSON.stringify(body)}${YOSTAR_SIGNING_SALT}`)
+    .digest('hex')
+    .toUpperCase();
+}
+
+function buildYostarHead(server, { deviceId, userId, token } = {}) {
+  const yostar = must(server.yostar, `Yostar login is not supported for ${server.key}.`);
+  return Object.fromEntries(
+    Object.entries({
+      Region: yostar.region,
+      PID: yostar.pid,
+      Channel: 'web',
+      Platform: 'pc',
+      Version: YOSTAR_SDK_VERSION,
+      Lang: yostar.lang,
+      DeviceID: deviceId,
+      UID: userId,
+      Token: token,
+      Time: Math.floor(Date.now() / 1000)
+    }).filter(([, value]) => value !== undefined && value !== null && value !== '')
+  );
+}
+
+async function yostarPlatformPost(server, path, body, auth = {}) {
+  const yostar = must(server.yostar, `Yostar login is not supported for ${server.key}.`);
+  const head = buildYostarHead(server, auth);
+  const authorization = {
+    Head: head,
+    Sign: signYostarPayload(head, body)
+  };
+
+  const response = await requestJson(`${yostar.sdkBase}${path}`, {
+    method: 'POST',
+    body,
+    headers: {
+      Authorization: JSON.stringify(authorization)
+    }
+  });
+
+  if (Number(response?.Code) !== 200) {
+    fail(`Yostar platform request failed for ${path}: ${JSON.stringify(response)}`);
+  }
+  return must(response?.Data, `Yostar platform response missing Data for ${path}: ${JSON.stringify(response)}`);
+}
+
+async function getYostarSessionToken(server, { uid, token, deviceId }) {
+  const data = await yostarPlatformPost(server, '/user/quick-login', {}, {
+    deviceId,
+    userId: uid,
+    token
+  });
+  const userInfo = must(data?.UserInfo, `Yostar quick-login response missing UserInfo: ${JSON.stringify(data)}`);
+  return {
+    uid: String(must(userInfo.ID || uid, `Yostar quick-login response missing user ID: ${JSON.stringify(data)}`)),
+    token: must(userInfo.Token, `Yostar quick-login response missing token: ${JSON.stringify(data)}`)
+  };
+}
+
+async function getYostarLoginToken(server, { email, token, deviceId }) {
+  const data = await yostarPlatformPost(
+    server,
+    '/user/login',
+    {
+      Type: 'yostar',
+      OpenID: email,
+      Token: token,
+      Secret: '',
+      CheckAccountPlus: 0
+    },
+    { deviceId }
+  );
+  const userInfo = must(data?.UserInfo, `Yostar login response missing UserInfo: ${JSON.stringify(data)}`);
+  console.log(`Yostar session secrets for future runs: YOSTAR_UID=${userInfo.ID}, YOSTAR_DEVICE_ID=${deviceId}`);
+  return {
+    uid: String(must(userInfo.ID, `Yostar login response missing user ID: ${JSON.stringify(data)}`)),
+    token: must(userInfo.Token, `Yostar login response missing token: ${JSON.stringify(data)}`)
+  };
+}
+
+async function prepareOauthCredentials(server, credentials) {
+  if (credentials.authMode === 'legacy_oauth') {
+    return {
+      ...credentials,
+      oauthType: server.oauthType
+    };
+  }
+
+  if (credentials.authMode === 'yostar_session') {
+    console.log('auth mode: yostar_session');
+    const session = await getYostarSessionToken(server, credentials);
+    return {
+      ...credentials,
+      ...session,
+      oauthType: server.yostarOauthType
+    };
+  }
+
+  if (credentials.authMode === 'yostar_auth') {
+    console.log('auth mode: yostar_auth');
+    const session = await getYostarLoginToken(server, credentials);
+    return {
+      ...credentials,
+      ...session,
+      oauthType: server.yostarOauthType
+    };
+  }
+
+  fail(`Unsupported MS_AUTH_MODE "${credentials.authMode}". Use legacy_oauth, yostar_session, or yostar_auth.`);
 }
 
 function loadProtoTypes(liqiJson) {
@@ -257,7 +412,13 @@ async function openChannel(endpoint, origin, Wrapper) {
   };
 
   await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      ws.terminate();
+      reject(new Error(`WebSocket open timeout for ${endpoint}`));
+    }, WS_OPEN_TIMEOUT_MS);
     const cleanup = () => {
+      clearTimeout(timeout);
       ws.removeListener('open', onOpen);
       ws.removeListener('error', onError);
     };
@@ -315,7 +476,7 @@ async function openChannel(endpoint, origin, Wrapper) {
         const timeout = setTimeout(() => {
           pending.delete(requestId);
           reject(new Error(`RPC request timeout for ${name}`));
-        }, 15000);
+        }, RPC_TIMEOUT_MS);
 
         pending.set(requestId, {
           timeout,
@@ -338,8 +499,19 @@ async function openChannel(endpoint, origin, Wrapper) {
         return;
       }
       await new Promise(resolve => {
-        ws.once('close', resolve);
-        ws.close();
+        const timeout = setTimeout(() => {
+          ws.terminate();
+          resolve();
+        }, WS_CLOSE_TIMEOUT_MS);
+        ws.once('close', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        } else {
+          ws.terminate();
+        }
       });
     }
   };
@@ -347,61 +519,123 @@ async function openChannel(endpoint, origin, Wrapper) {
 
 async function createSessionForRoute(context, route, credentials) {
   const { server, proto, version, versionToForce } = context;
-  const { uid, token, email, password } = credentials;
+  const { uid, token, email, password, oauthType } = credentials;
   const device = buildDevice(server);
   console.log(`trying gateway route ${route.id}: ${route.endpoint}`);
   const channel = await openChannel(route.endpoint, server.origin, proto.Wrapper);
+  let authenticated = false;
   const call = async (name, requestType, payload, responseType) => {
     const wrapper = await channel.send(name, encode(requestType, payload));
     return responseType ? responseType.decode(wrapper.data) : wrapper;
   };
   const common = (name, responseType) => call(name, proto.ReqCommon, {}, responseType);
 
-  await call(
-    '.lq.Route.requestConnection',
-    proto.ReqRequestConnection,
-    {
-      type: 1,
-      route_id: route.id,
-      timestamp: Date.now()
-    },
-    proto.ResRequestConnection
-  );
-  await call(
-    '.lq.Route.heartbeat',
-    proto.ReqHeartbeat,
-    {
-      delay: 0,
-      no_operation_counter: 0,
-      platform: 11,
-      network_quality: 0
-    },
-    proto.ResHeartbeat
-  );
-
-  if (server.loginMode === 'account_password') {
-    const loginResponse = await call(
-      '.lq.Lobby.login',
-      proto.ReqLogin,
+  try {
+    await call(
+      '.lq.Route.requestConnection',
+      proto.ReqRequestConnection,
       {
-        account: email,
-        password: hashCnPassword(password),
+        type: 1,
+        route_id: route.id,
+        timestamp: Date.now()
+      },
+      proto.ResRequestConnection
+    );
+    await call(
+      '.lq.Route.heartbeat',
+      proto.ReqHeartbeat,
+      {
+        delay: 0,
+        no_operation_counter: 0,
+        platform: 11,
+        network_quality: 0
+      },
+      proto.ResHeartbeat
+    );
+
+    if (server.loginMode === 'account_password') {
+      const loginResponse = await call(
+        '.lq.Lobby.login',
+        proto.ReqLogin,
+        {
+          account: email,
+          password: hashCnPassword(password),
+          reconnect: false,
+          device,
+          random_key: randomUUID(),
+          client_version: { resource: version },
+          gen_access_token: true,
+          currency_platforms: server.currencyPlatforms,
+          type: server.loginType,
+          client_version_string: `web-${versionToForce}`,
+          tag: server.tag
+        },
+        proto.ResOauth2Login
+      );
+      if (!loginResponse.account) {
+        fail(`login failed: ${JSON.stringify(loginResponse)}`);
+      }
+
+      authenticated = true;
+      return {
+        proto,
+        common,
+        call,
+        close: () => channel.close(),
+        loginGold: Number(loginResponse.account.gold ?? 0)
+      };
+    }
+
+    let accessToken = token;
+    if (server.loginMode === 'oauth_code') {
+      const authResponse = await call(
+        '.lq.Lobby.oauth2Auth',
+        proto.ReqOauth2Auth,
+        {
+          type: oauthType,
+          code: token,
+          uid,
+          client_version_string: `web-${versionToForce}`
+        },
+        proto.ResOauth2Auth
+      );
+      accessToken = must(authResponse?.access_token, `oauth2Auth failed: ${JSON.stringify(authResponse)}`);
+    }
+
+    const checkResponse = await call(
+      '.lq.Lobby.oauth2Check',
+      proto.ReqOauth2Check,
+      {
+        type: oauthType,
+        access_token: accessToken
+      },
+      proto.ResOauth2Check
+    );
+    if (!checkResponse?.has_account) {
+      fail(`oauth2Check failed: ${JSON.stringify(checkResponse)}`);
+    }
+
+    const loginResponse = await call(
+      '.lq.Lobby.oauth2Login',
+      proto.ReqOauth2Login,
+      {
+        type: oauthType,
+        access_token: accessToken,
         reconnect: false,
         device,
         random_key: randomUUID(),
         client_version: { resource: version },
-        gen_access_token: true,
-        currency_platforms: server.currencyPlatforms,
-        type: server.loginType,
         client_version_string: `web-${versionToForce}`,
+        currency_platforms: server.currencyPlatforms,
         tag: server.tag
       },
       proto.ResOauth2Login
     );
     if (!loginResponse.account) {
-      fail('login failed: account not found.');
+      fail(`oauth2Login failed: ${JSON.stringify(loginResponse)}`);
     }
 
+    authenticated = true;
     return {
       proto,
       common,
@@ -409,72 +643,25 @@ async function createSessionForRoute(context, route, credentials) {
       close: () => channel.close(),
       loginGold: Number(loginResponse.account.gold ?? 0)
     };
+  } finally {
+    if (!authenticated) {
+      await channel.close().catch(error => {
+        console.warn(`failed to close unauthenticated channel: ${error?.message || error}`);
+      });
+    }
   }
-
-  let accessToken = token;
-  if (server.loginMode === 'oauth_code') {
-    const authResponse = await call(
-      '.lq.Lobby.oauth2Auth',
-      proto.ReqOauth2Auth,
-      {
-        type: server.oauthType,
-        code: token,
-        uid,
-        client_version_string: `web-${versionToForce}`
-      },
-      proto.ResOauth2Auth
-    );
-    accessToken = must(authResponse?.access_token, `oauth2Auth failed: ${JSON.stringify(authResponse)}`);
-  }
-
-  const checkResponse = await call(
-    '.lq.Lobby.oauth2Check',
-    proto.ReqOauth2Check,
-    {
-      type: server.oauthType,
-      access_token: accessToken
-    },
-    proto.ResOauth2Check
-  );
-  if (!checkResponse?.has_account) {
-    fail(`oauth2Check failed: ${JSON.stringify(checkResponse)}`);
-  }
-
-  const loginResponse = await call(
-    '.lq.Lobby.oauth2Login',
-    proto.ReqOauth2Login,
-    {
-      type: server.oauthType,
-      access_token: accessToken,
-      reconnect: false,
-      device,
-      random_key: randomUUID(),
-      client_version: { resource: version },
-      client_version_string: `web-${versionToForce}`,
-      currency_platforms: server.currencyPlatforms,
-      tag: server.tag
-    },
-    proto.ResOauth2Login
-  );
-  if (!loginResponse.account) {
-    fail('oauth2Login failed: account not found.');
-  }
-
-  return {
-    proto,
-    common,
-    call,
-    close: () => channel.close(),
-    loginGold: Number(loginResponse.account.gold ?? 0)
-  };
 }
 
 async function createSession(context, credentials) {
   const errors = [];
+  const preparedCredentials =
+    context.server.loginMode === 'oauth_code'
+      ? await prepareOauthCredentials(context.server, credentials)
+      : credentials;
 
   for (const route of context.routes) {
     try {
-      return await createSessionForRoute(context, route, credentials);
+      return await createSessionForRoute(context, route, preparedCredentials);
     } catch (error) {
       errors.push({ route: route.id, message: error?.message || String(error) });
       console.warn(`gateway route ${route.id} failed: ${error?.message || error}`);
@@ -559,8 +746,13 @@ async function runActions(session) {
 
 function loadRuntimeConfig() {
   const server = getServerConfig(process.env.MS_SERVER);
-  const uid = process.env.UID;
-  const token = process.env.TOKEN;
+  const deviceId = process.env.YOSTAR_DEVICE_ID || process.env.DEVICE_ID;
+  const authMode = (process.env.MS_AUTH_MODE || process.env.AUTH_MODE || (deviceId ? 'yostar_session' : 'legacy_oauth'))
+    .trim()
+    .toLowerCase();
+  const uid = process.env.YOSTAR_UID || process.env.YOSTAR_USER_ID || process.env.UID;
+  const sessionToken = process.env.YOSTAR_TOKEN || process.env.YOSTAR_SESSION_TOKEN || process.env.TOKEN;
+  const token = authMode === 'yostar_auth' ? process.env.YOSTAR_AUTH_TOKEN || sessionToken : sessionToken;
   const email = process.env.EMAIL;
   const password = process.env.PASSWORD;
 
@@ -568,13 +760,24 @@ function loadRuntimeConfig() {
     if (!email || !password) {
       fail('EMAIL and PASSWORD environment variables are required for CN server.');
     }
-  } else if (!uid || !token) {
-    fail('UID and TOKEN environment variables are required for JP/EN/KR servers.');
+  } else {
+    if ((authMode === 'yostar_session' || authMode === 'yostar_auth') && !deviceId) {
+      fail('YOSTAR_DEVICE_ID or DEVICE_ID environment variable is required for Yostar session authentication.');
+    }
+    if (authMode === 'yostar_auth') {
+      if (!email || !token) {
+        fail('EMAIL and YOSTAR_AUTH_TOKEN environment variables are required for yostar_auth.');
+      }
+    } else if (!uid || !token) {
+      fail('UID and TOKEN environment variables are required for JP/EN/KR servers.');
+    }
   }
 
   return {
     uid,
     token,
+    deviceId,
+    authMode,
     email,
     password,
     server
