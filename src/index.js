@@ -239,6 +239,7 @@ function buildClientVersionStrings(versionInfo, resourceVersion, productVersion)
   const product = String(productVersion || '').trim();
 
   return uniqueStrings([
+    product && `WebGL-${product}`,
     product && `${CLIENT_VERSION_PREFIX}-${product}`,
     resourceVersion && `${CLIENT_VERSION_PREFIX}-${resourceVersion}`,
     version && `${CLIENT_VERSION_PREFIX}-${version}`,
@@ -440,7 +441,7 @@ async function loadServerContext(server) {
   const productVersion = parseProductVersion(pageHtml) || process.env.MS_PRODUCT_VERSION;
   const clientVersionStrings = buildClientVersionStrings(versionInfo, resourceVersion, productVersion);
   const clientVersionString = must(clientVersionStrings[0], `Unable to build client version from ${JSON.stringify(versionInfo)}`);
-  const clientVersionInfo = buildClientVersionInfo(undefined, version);
+  const clientVersionInfo = buildClientVersionInfo(productVersion, version);
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
 
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);
