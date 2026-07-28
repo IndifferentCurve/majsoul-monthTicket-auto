@@ -101,7 +101,15 @@ The default scheduled run is `21:05 UTC`, which is `06:05 JST/KST`.
 
 If the workflow fails with `oauth2Auth failed` and `error.code=151`, check the Yostar credential pair first. `YOSTAR_UID` must be `Data.UserInfo.ID`, `YOSTAR_TOKEN` must be `Data.UserInfo.Token`, and both must come from the current Yostar SDK login flow. A token produced by an old direct `/user/login` request, or a `UID2` copied from `/user/detail`, can pass Yostar platform `quick-login` but still fail Mahjong Soul `oauth2Auth`.
 
-After the credential pair is confirmed, check the OAuth type and client version. In July 2026, the official JP web client moved fully to Unity WebGL and started identifying itself as `WebGL-<productVersion>` (for example, `WebGL-4.0.11`). The old `web-<productVersion>` value can now be rejected with `error.code=151`, even though the UID and token are still valid. The script reads `productVersion` from `index.html`, tries the Unity identifier first, and keeps the legacy product/resource identifiers as fallbacks. It also sends both the product package version and the resource version in `client_version`.
+After the credential pair is confirmed, check the OAuth type and client version. Since the July 23, 2026 Unity update, the web client identifies itself as `WebGL_2022-<resourceVersion>` (for example, `WebGL_2022-0.16.213`). The old `web-<productVersion>` value can be rejected with `error.code=151`, even though the UID and token are valid. The script uses the current Unity resource version first and keeps legacy identifiers as fallbacks.
+
+The same update added field 6, `platform`, to `ReqRequestConnection`. It must contain `Web`. Older `liqi.json` files do not define this field, so protobuf libraries silently discard it; `requestConnection` can appear to succeed, but the following `oauth2Auth` then fails with code `151`. The script patches the fetched protobuf definition before encoding the request.
+
+If Mahjong Soul updates the Unity resource version before this repository is updated, set `MS_UNITY_RESOURCE_VERSION` to the number shown on the login screen, without the leading `v` or trailing platform/product parts. For `v0.16.213.W.4.0.11`, use:
+
+```text
+MS_UNITY_RESOURCE_VERSION=0.16.213
+```
 
 The Yostar SDK v4 OAuth types are JP `21`, EN `22`, and KR `23`. A JP account using EN type `22` can fail with the same `151` error.
 

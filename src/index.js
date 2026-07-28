@@ -10,6 +10,7 @@ const WS_OPEN_TIMEOUT_MS = 15000;
 const WS_CLOSE_TIMEOUT_MS = 5000;
 const RPC_TIMEOUT_MS = 15000;
 const CLIENT_VERSION_PREFIX = 'web';
+const DEFAULT_UNITY_RESOURCE_VERSION = '0.16.213';
 const YOSTAR_SDK_VERSION = '4.16.2';
 const YOSTAR_SIGNING_SALT = '347467131a466f6865d7f2662e38841fbe2adb23';
 const BUY_GREEN_GIFT = false;
@@ -232,13 +233,20 @@ function uniqueStrings(values) {
   });
 }
 
-function buildClientVersionStrings(versionInfo, resourceVersion, productVersion) {
+function buildClientVersionStrings(versionInfo, resourceVersion, productVersion, unityResourceVersion) {
   const version = String(versionInfo?.version || '').trim();
   const forceVersion = String(versionInfo?.force_version || '').trim();
   const forceResourceVersion = normalizeResourceVersion(forceVersion);
   const product = String(productVersion || '').trim();
+  const unityResource = String(unityResourceVersion || '').trim();
+  const overrides = String(process.env.MS_CLIENT_VERSION_STRINGS || process.env.MS_CLIENT_VERSION_STRING || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
 
   return uniqueStrings([
+    ...overrides,
+    unityResource && `WebGL_2022-${unityResource}`,
     product && `WebGL-${product}`,
     product && `${CLIENT_VERSION_PREFIX}-${product}`,
     resourceVersion && `${CLIENT_VERSION_PREFIX}-${resourceVersion}`,
@@ -391,6 +399,13 @@ async function prepareOauthCredentials(server, credentials) {
 }
 
 function loadProtoTypes(liqiJson) {
+  const requestConnectionFields = liqiJson?.nested?.lq?.nested?.ReqRequestConnection?.fields;
+  if (requestConnectionFields && !requestConnectionFields.platform) {
+    requestConnectionFields.platform = {
+      type: 'string',
+      id: 6
+    };
+  }
   const root = protobuf.Root.fromJSON(liqiJson);
   return Object.fromEntries(
     Object.entries(PROTO_TYPES).map(([key, typeName]) => [key, root.lookupType(typeName)])
@@ -439,13 +454,22 @@ async function loadServerContext(server) {
   const version = versionInfo.version;
   const resourceVersion = normalizeResourceVersion(version);
   const productVersion = parseProductVersion(pageHtml) || process.env.MS_PRODUCT_VERSION;
-  const clientVersionStrings = buildClientVersionStrings(versionInfo, resourceVersion, productVersion);
+  const unityResourceVersion = process.env.MS_UNITY_RESOURCE_VERSION || DEFAULT_UNITY_RESOURCE_VERSION;
+  const clientVersionStrings = buildClientVersionStrings(
+    versionInfo,
+    resourceVersion,
+    productVersion,
+    unityResourceVersion
+  );
   const clientVersionString = must(clientVersionStrings[0], `Unable to build client version from ${JSON.stringify(versionInfo)}`);
-  const clientVersionInfo = buildClientVersionInfo(productVersion, version);
+  const clientVersionInfo = buildClientVersionInfo(productVersion, `${unityResourceVersion}.W`);
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
 
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);
-  console.log(`client version -> product=${productVersion || 'unknown'} resource=${resourceVersion} string=${clientVersionString}`);
+  console.log(
+    `client version -> product=${productVersion || 'unknown'} resource=${resourceVersion} ` +
+      `unity_resource=${unityResourceVersion} string=${clientVersionString}`
+  );
   console.log(`client version candidates: ${clientVersionStrings.join(', ')}`);
 
   const [config, resManifest] = await Promise.all([
@@ -630,7 +654,8 @@ async function createSessionForRoute(context, route, credentials) {
       {
         type: 1,
         route_id: route.id,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        platform: 'Web'
       },
       proto.ResRequestConnection
     );
